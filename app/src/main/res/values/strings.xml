@@ -1,0 +1,19 @@
+<resources>
+    <string name="app_name">Slate</string>
+    <string name="default_list_name">List</string>
+    <string name="add_item_label">Add item</string>
+    <string name="add_item_placeholder">What needs to get done?</string>
+    <string name="add_time_sync_calendar">Add Time / Sync to Calendar</string>
+    <string name="todays_events_mode">Today\'s Events</string>
+    <string name="workspace_lists">Lists</string>
+    <string name="workspace_calendar">Calendar</string>
+    <string name="workspace_search">Search</string>
+    <string name="settings_title">Settings</string>
+    <string name="cd_settings">Open settings</string>
+    <string name="cd_drag_handle">Collapse active list sheet</string>
+    <string name="cd_back">Navigate back</string>
+    <string name="cd_star_item">Toggle priority star</string>
+    <string name="cd_schedule_item">Assign date and time</string>
+    <string name="cd_move_item">Move to another list</string>
+    <string name="cd_delete_item">Delete item</string>
+</resources>

@@ -1,0 +1,6 @@
+{
+  "name": "Slate",
+  "description": "Tactile two-layer list and calendar workspace built with Material 3 Expressive, Room persistence, and two-way Android CalendarContract sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
