@@ -8,6 +8,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -81,6 +82,7 @@ import androidx.compose.ui.zIndex
 import com.example.data.local.SlateListWithCounts
 import com.example.ui.components.SlateIcons
 import com.example.ui.components.containedTapGlow
+import com.example.ui.components.stickyPressScale
 import com.example.ui.theme.ListColorTags
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
@@ -93,11 +95,13 @@ fun ListsManagerPage(
   lists: List<SlateListWithCounts>,
   defaultLaunchListId: Long,
   activeListId: Long,
+  dismissSignal: Int = 0,
+  onHasActiveSubStateChanged: (Boolean) -> Unit = {},
   onSelectAndOpenList: (Long) -> Unit,
   onSetDefaultLaunchList: (Long) -> Unit,
   onCreateList: (name: String, colorHex: Long) -> Unit,
   onUpdateList: (listId: Long, name: String, colorHex: Long) -> Unit,
-  onDeleteList: (Long) -> Unit,
+  onRequestDeleteList: (SlateListWithCounts) -> Unit,
   onPersistListOrder: (List<Long>) -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -108,6 +112,17 @@ fun ListsManagerPage(
 
   var editingListId by remember { mutableStateOf<Long?>(null) }
   var isCreatingInline by remember { mutableStateOf(false) }
+
+  LaunchedEffect(editingListId, isCreatingInline) {
+    onHasActiveSubStateChanged(editingListId != null || isCreatingInline)
+  }
+
+  LaunchedEffect(dismissSignal) {
+    if (dismissSignal > 0) {
+      editingListId = null
+      isCreatingInline = false
+    }
+  }
 
   // Drag-and-drop reorder state for list cards
   var orderedLists by remember { mutableStateOf(lists) }
@@ -149,7 +164,7 @@ fun ListsManagerPage(
         val isDraggingThis = draggingListId == list.id
 
         val dragScaleState = animateFloatAsState(
-          targetValue = if (isDraggingThis) 1.03f else 1f,
+          targetValue = if (isDraggingThis) 1.035f else 1f,
           animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessMedium,
@@ -261,7 +276,7 @@ fun ListsManagerPage(
             onUpdateList(list.id, newName, newColorHex)
             editingListId = null
           },
-          onDelete = { onDeleteList(list.id) },
+          onDelete = { onRequestDeleteList(list) },
           modifier = staticCardModifier
             .zIndex(if (isDraggingThis) 10f else 0f)
             .graphicsLayer {
@@ -327,11 +342,18 @@ private fun ExpandableListCard(
     }
   }
 
+  val borderColor = when {
+    isDragging -> accent.copy(alpha = 0.9f)
+    isEditing || isActive -> MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
+    else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+  }
+
   Surface(
     modifier = modifier
       .fillMaxWidth()
       .defaultMinSize(minHeight = 84.dp)
       .clip(RoundedCornerShape(24.dp))
+      .containedTapGlow(accent, maxAlpha = 0.36f)
       .animateContentSize(
         animationSpec = spring(
           dampingRatio = Spring.DampingRatioMediumBouncy,
@@ -352,6 +374,7 @@ private fun ExpandableListCard(
       isActive -> MaterialTheme.colorScheme.surfaceContainerHigh
       else -> MaterialTheme.colorScheme.surfaceContainer
     },
+    border = BorderStroke(if (isDragging || isEditing || isActive) 1.5.dp else 1.dp, borderColor),
     tonalElevation = if (isActive || isEditing) 4.dp else if (isDragging) 10.dp else 1.dp,
     shadowElevation = if (isDragging) 12.dp else 0.dp,
   ) {
@@ -410,6 +433,14 @@ private fun ExpandableListCard(
           } else {
             MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.65f)
           },
+          border = BorderStroke(
+            width = 1.dp,
+            color = if (isDefault) {
+              MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+            } else {
+              MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            },
+          ),
         ) {
           Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -577,6 +608,8 @@ private fun InlineCreateListCard(
       .fillMaxWidth()
       .defaultMinSize(minHeight = 64.dp)
       .clip(RoundedCornerShape(24.dp))
+      .then(if (!isExpanded) Modifier.stickyPressScale(pressedScale = 0.98f) else Modifier)
+      .containedTapGlow(MaterialTheme.colorScheme.primary)
       .animateContentSize(
         animationSpec = spring(
           dampingRatio = Spring.DampingRatioMediumBouncy,
@@ -588,6 +621,10 @@ private fun InlineCreateListCard(
     shape = RoundedCornerShape(24.dp),
     color = MaterialTheme.colorScheme.primaryContainer,
     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    border = BorderStroke(
+      width = if (isExpanded) 1.5.dp else 1.dp,
+      color = MaterialTheme.colorScheme.primary.copy(alpha = if (isExpanded) 0.6f else 0.38f),
+    ),
     tonalElevation = if (isExpanded) 4.dp else 1.dp,
   ) {
     AnimatedContent(
@@ -725,7 +762,7 @@ private fun ColorTagPickerRow(
             if (isSelected) {
               Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
             } else {
-              Modifier
+              Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), CircleShape)
             }
           )
           .clickable { onSelectColor(hex) }

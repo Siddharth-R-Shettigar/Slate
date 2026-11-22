@@ -3,7 +3,11 @@ package com.example
 import com.example.data.calendar.CalendarSyncRepository
 import com.example.data.local.SlateTaskEntity
 import com.example.ui.SearchFilter
+import com.example.ui.components.extractMeetingLink
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Calendar
@@ -46,5 +50,44 @@ class SlateDomainLogicTest {
     assertEquals(listOf(2L), scheduled.map { it.id })
     assertEquals(listOf(3L), completed.map { it.id })
     assertEquals(4, SearchFilter.entries.size)
+  }
+
+  @Test
+  fun extractMeetingLinkPrioritizesVideoProvidersAndHandlesPlainUrls() {
+    val meet = extractMeetingLink(
+      description = "Agenda: https://docs.example.com/notes\nJoin at https://meet.google.com/abc-defg-hij.",
+      location = "",
+    )
+    assertNotNull(meet)
+    assertEquals("https://meet.google.com/abc-defg-hij", meet!!.url)
+    assertEquals("Join Google Meet", meet.providerLabel)
+    assertTrue(meet.isVideoMeeting)
+
+    val zoom = extractMeetingLink(
+      description = "",
+      location = "https://us02web.zoom.us/j/123456789",
+    )
+    assertNotNull(zoom)
+    assertEquals("Join Zoom", zoom!!.providerLabel)
+    assertTrue(zoom.isVideoMeeting)
+
+    val teams = extractMeetingLink(
+      description = "Join here: https://teams.microsoft.com/l/meetup-join/19%3ameeting",
+      location = "Conference Room B",
+    )
+    assertNotNull(teams)
+    assertEquals("Join Teams", teams!!.providerLabel)
+    assertTrue(teams.isVideoMeeting)
+
+    val generic = extractMeetingLink(
+      description = "See details at https://slate.example.org/events/42)",
+      location = "",
+    )
+    assertNotNull(generic)
+    assertEquals("https://slate.example.org/events/42", generic!!.url)
+    assertEquals("Open Link", generic.providerLabel)
+    assertFalse(generic.isVideoMeeting)
+
+    assertNull(extractMeetingLink(description = "Offline catchup", location = "Lobby"))
   }
 }

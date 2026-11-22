@@ -3,7 +3,9 @@ package com.example.ui.components
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
@@ -54,6 +57,7 @@ fun BlurredContextMenuOverlay(
   accentColor: Color,
   cardTopInRootY: Float,
   onDismiss: () -> Unit,
+  onEditTitle: () -> Unit,
   onToggleStar: () -> Unit,
   onAssignDateTime: () -> Unit,
   onMoveToList: () -> Unit,
@@ -75,7 +79,7 @@ fun BlurredContextMenuOverlay(
     modifier = Modifier
       .fillMaxSize()
       .drawBehind {
-        drawRect(Color.Black.copy(alpha = 0.42f * openProgress.value))
+        drawRect(Color.Black.copy(alpha = 0.44f * openProgress.value))
       }
       .clickable(
         interactionSource = remember { MutableInteractionSource() },
@@ -85,8 +89,8 @@ fun BlurredContextMenuOverlay(
       .testTag("blurred_context_menu_backdrop"),
   ) {
     val maxHeightPx = with(density) { maxHeight.toPx() }
-    val menuHeightEstimatePx = with(density) { 120.dp.toPx() }
-    val cardHeightEstimatePx = with(density) { 76.dp.toPx() }
+    val menuHeightEstimatePx = with(density) { 126.dp.toPx() }
+    val cardHeightEstimatePx = with(density) { 78.dp.toPx() }
     val topSafePx = with(density) { 80.dp.toPx() }
     val bottomSafePx = maxHeightPx - cardHeightEstimatePx - menuHeightEstimatePx - with(density) { 48.dp.toPx() }
 
@@ -97,16 +101,17 @@ fun BlurredContextMenuOverlay(
     Column(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(horizontal = 20.dp)
+        .padding(horizontal = 16.dp)
         .offset { IntOffset(0, clampedCardTopPx) },
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-      // Selected card smoothly elevates in place from 1.00f -> 1.03f with zero double-bounce
+      // Selected card smoothly elevates and highlights in place over the blurred backdrop
       TaskCardSurface(
         task = task,
         accentColor = accentColor,
         tonalElevation = 12.dp,
+        isHighlighted = true,
         onToggleComplete = {},
         modifier = Modifier
           .widthIn(max = 560.dp)
@@ -123,10 +128,11 @@ fun BlurredContextMenuOverlay(
           ),
       )
 
-      // Custom Material 3 Expressive Floating Pill Menu glides smoothly out from under card in one motion
+      // Custom Material 3 Expressive Floating Pill Menu glides smoothly out from under card
       Surface(
         modifier = Modifier
-          .widthIn(max = 520.dp)
+          .fillMaxWidth()
+          .widthIn(max = 540.dp)
           .graphicsLayer {
             val p = openProgress.value
             val s = 0.94f + 0.06f * p
@@ -143,14 +149,35 @@ fun BlurredContextMenuOverlay(
           .testTag("expressive_context_pill_menu"),
         shape = RoundedCornerShape(32.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
         tonalElevation = 10.dp,
         shadowElevation = 14.dp,
       ) {
         Row(
-          modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+          horizontalArrangement = Arrangement.spacedBy(4.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
+          PillMenuAction(
+            icon = SlateIcons.Edit,
+            label = "Edit",
+            contentDescription = "Edit task",
+            tint = MaterialTheme.colorScheme.onSurface,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+            testTag = "menu_action_edit",
+            onClick = onEditTitle,
+          )
+          PillMenuAction(
+            icon = SlateIcons.Event,
+            label = "Time",
+            contentDescription = stringResource(R.string.cd_schedule_item),
+            tint = MaterialTheme.colorScheme.primary,
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f),
+            testTag = "menu_action_schedule",
+            onClick = onAssignDateTime,
+          )
           PillMenuAction(
             icon = if (task.isStarred) Icons.Rounded.Star else SlateIcons.StarOutline,
             label = if (task.isStarred) "Unstar" else "Star",
@@ -168,15 +195,6 @@ fun BlurredContextMenuOverlay(
             },
           )
           PillMenuAction(
-            icon = SlateIcons.Event,
-            label = "Schedule",
-            contentDescription = stringResource(R.string.cd_schedule_item),
-            tint = MaterialTheme.colorScheme.primary,
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
-            testTag = "menu_action_schedule",
-            onClick = onAssignDateTime,
-          )
-          PillMenuAction(
             icon = SlateIcons.DriveFileMove,
             label = "Move",
             contentDescription = stringResource(R.string.cd_move_item),
@@ -190,7 +208,7 @@ fun BlurredContextMenuOverlay(
             label = "Delete",
             contentDescription = stringResource(R.string.cd_delete_item),
             tint = MaterialTheme.colorScheme.error,
-            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.75f),
             testTag = "menu_action_delete",
             onClick = {
               onDelete()
@@ -204,7 +222,7 @@ fun BlurredContextMenuOverlay(
 }
 
 @Composable
-private fun PillMenuAction(
+private fun RowScope.PillMenuAction(
   icon: ImageVector,
   label: String,
   contentDescription: String,
@@ -215,27 +233,29 @@ private fun PillMenuAction(
 ) {
   Column(
     modifier = Modifier
-      .defaultMinSize(minWidth = 68.dp, minHeight = 48.dp)
+      .weight(1f)
+      .defaultMinSize(minHeight = 48.dp)
       .clip(RoundedCornerShape(22.dp))
       .containedTapGlow(tint)
       .clickable(onClick = onClick)
-      .padding(horizontal = 8.dp, vertical = 6.dp)
+      .padding(horizontal = 4.dp, vertical = 6.dp)
       .testTag(testTag),
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.Center,
   ) {
     Box(
       modifier = Modifier
-        .size(42.dp)
+        .size(40.dp)
         .clip(CircleShape)
-        .background(containerColor),
+        .background(containerColor)
+        .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f), CircleShape),
       contentAlignment = Alignment.Center,
     ) {
       Icon(
         imageVector = icon,
         contentDescription = contentDescription,
         tint = tint,
-        modifier = Modifier.size(22.dp),
+        modifier = Modifier.size(20.dp),
       )
     }
     Spacer(modifier = Modifier.height(4.dp))

@@ -6,12 +6,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,8 +42,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
@@ -46,8 +49,11 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -81,9 +87,11 @@ import com.example.data.calendar.CalendarSyncRepository
 import com.example.data.calendar.DeviceCalendarEvent
 import com.example.data.local.SlateTaskEntity
 import com.example.ui.CalendarViewMode
+import com.example.ui.components.ExpandableCalendarEventCard
 import com.example.ui.components.ScheduleDateTimeDialog
 import com.example.ui.components.SlateIcons
 import com.example.ui.components.containedTapGlow
+import com.example.ui.components.stickyPressScale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -91,6 +99,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CalendarSyncPage(
   hasCalendarPermissions: Boolean,
@@ -100,6 +109,8 @@ fun CalendarSyncPage(
   viewMode: CalendarViewMode,
   isSyncing: Boolean,
   lastSyncedMillis: Long?,
+  dismissSignal: Int = 0,
+  onHasActiveSubStateChanged: (Boolean) -> Unit = {},
   onPermissionsResult: () -> Unit,
   onSelectDate: (Long) -> Unit,
   onChangeViewMode: (CalendarViewMode) -> Unit,
@@ -116,6 +127,18 @@ fun CalendarSyncPage(
   val scope = rememberCoroutineScope()
 
   var isAddingInline by remember { mutableStateOf(false) }
+  var expandedEventKey by remember { mutableStateOf<String?>(null) }
+
+  LaunchedEffect(isAddingInline, expandedEventKey) {
+    onHasActiveSubStateChanged(isAddingInline || expandedEventKey != null)
+  }
+
+  LaunchedEffect(dismissSignal) {
+    if (dismissSignal > 0) {
+      isAddingInline = false
+      expandedEventKey = null
+    }
+  }
 
   val selectedDayBounds = remember(selectedDateMillis) {
     CalendarSyncRepository.dayBoundsMillis(selectedDateMillis)
@@ -153,6 +176,9 @@ fun CalendarSyncPage(
     keys
   }
 
+  val outlineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+  val cardBorder = remember(outlineColor) { BorderStroke(1.dp, outlineColor) }
+
   val itemSurfaceModifier = remember {
     Modifier
       .fillMaxWidth()
@@ -162,12 +188,6 @@ fun CalendarSyncPage(
     Modifier
       .fillMaxWidth()
       .padding(horizontal = 16.dp, vertical = 14.dp)
-  }
-  val eventAccentBarModifier = remember {
-    Modifier
-      .width(4.dp)
-      .height(34.dp)
-      .clip(CircleShape)
   }
   val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
 
@@ -191,6 +211,7 @@ fun CalendarSyncPage(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(24.dp),
             color = MaterialTheme.colorScheme.primaryContainer,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
           ) {
             Column(
               modifier = Modifier.padding(18.dp),
@@ -234,7 +255,7 @@ fun CalendarSyncPage(
         }
       }
 
-      // Interactive Monthly / Weekly Calendar Card (no text wrapping!)
+      // Interactive Monthly / Weekly Calendar Card
       item(key = "interactive_calendar_card", contentType = "calendar_grid") {
         InteractiveCalendarCard(
           selectedDateMillis = selectedDateMillis,
@@ -242,39 +263,102 @@ fun CalendarSyncPage(
           populatedDayKeys = populatedDayKeys,
           hasCalendarPermissions = hasCalendarPermissions,
           isSyncing = isSyncing,
+          cardBorder = cardBorder,
           onSelectDate = onSelectDate,
           onChangeViewMode = onChangeViewMode,
           onSyncNow = onSyncNow,
         )
       }
 
-      // Selected Day Header
-      item(key = "selected_day_header", contentType = "day_header") {
+      // Sticky Selected Day Header + "+" Button (sticks on scroll down, unsticks below calendar box on scroll up)
+      stickyHeader(key = "selected_day_header", contentType = "day_header") {
         val dayLabel = remember(selectedDateMillis) {
           SimpleDateFormat("EEEE, MMM d", Locale.getDefault()).format(Date(selectedDateMillis))
         }
-        Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 4.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
+        Surface(
+          modifier = Modifier.fillMaxWidth(),
+          color = MaterialTheme.colorScheme.background.copy(alpha = 0.97f),
         ) {
-          Column {
-            Text(
-              text = dayLabel,
-              style = MaterialTheme.typography.titleLarge,
-              color = MaterialTheme.colorScheme.onSurface,
-            )
-            lastSyncedMillis?.let { syncedAt ->
-              val timeStr = timeFormat.format(Date(syncedAt))
-              Text(
-                text = "Synced $timeStr",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-              )
+          Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = dayLabel,
+                  style = MaterialTheme.typography.titleLarge,
+                  color = MaterialTheme.colorScheme.onSurface,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+                lastSyncedMillis?.let { syncedAt ->
+                  val timeStr = timeFormat.format(Date(syncedAt))
+                  Text(
+                    text = "Synced $timeStr",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+              }
+
+              Spacer(modifier = Modifier.width(12.dp))
+
+              FilledTonalIconButton(
+                onClick = {
+                  expandedEventKey = null
+                  isAddingInline = !isAddingInline
+                },
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                  containerColor = if (isAddingInline) {
+                    MaterialTheme.colorScheme.primary
+                  } else {
+                    MaterialTheme.colorScheme.primaryContainer
+                  },
+                  contentColor = if (isAddingInline) {
+                    MaterialTheme.colorScheme.onPrimary
+                  } else {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                  },
+                ),
+                modifier = Modifier
+                  .size(48.dp)
+                  .clip(CircleShape)
+                  .border(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                    shape = CircleShape,
+                  )
+                  .containedTapGlow(MaterialTheme.colorScheme.primary)
+                  .testTag("sticky_calendar_add_button"),
+              ) {
+                Icon(
+                  imageVector = if (isAddingInline) Icons.Rounded.Close else Icons.Rounded.Add,
+                  contentDescription = if (isAddingInline) "Close schedule box" else "Schedule item for selected day",
+                )
+              }
             }
+            HorizontalDivider(color = outlineColor.copy(alpha = 0.45f))
           }
+        }
+      }
+
+      // Inline composer opens right underneath sticky header when "+" is tapped
+      if (isAddingInline) {
+        item(key = "inline_calendar_add_box_top", contentType = "inline_add_card") {
+          InlineCalendarAddCard(
+            isExpanded = true,
+            selectedDateMillis = selectedDateMillis,
+            onExpand = {},
+            onCancel = { isAddingInline = false },
+            onAdd = { title, startMillis ->
+              onAddCalendarTask(title, startMillis)
+              isAddingInline = false
+            },
+          )
         }
       }
 
@@ -284,6 +368,7 @@ fun CalendarSyncPage(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = cardBorder,
           ) {
             Text(
               text = "Nothing scheduled for this day yet.",
@@ -307,6 +392,7 @@ fun CalendarSyncPage(
           modifier = itemSurfaceModifier,
           shape = RoundedCornerShape(20.dp),
           color = MaterialTheme.colorScheme.surfaceContainer,
+          border = cardBorder,
         ) {
           Row(
             modifier = itemRowModifier,
@@ -340,62 +426,40 @@ fun CalendarSyncPage(
         key = { "cal_ev_${it.eventId}_${it.startMillis}" },
         contentType = { "calendar_event_card" },
       ) { event ->
-        val timeRange = remember(event) {
-          if (event.allDay) "All day"
-          else "${timeFormat.format(Date(event.startMillis))} – ${timeFormat.format(Date(event.endMillis))}"
-        }
-        Surface(
-          onClick = { onImportEventToActiveList(event) },
-          modifier = itemSurfaceModifier,
-          shape = RoundedCornerShape(20.dp),
-          color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        ) {
-          Row(
-            modifier = itemRowModifier,
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Box(
-              modifier = eventAccentBarModifier
-                .background(if (event.color != 0) Color(event.color) else MaterialTheme.colorScheme.tertiary)
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-              Text(
-                text = event.title,
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-              )
-              Text(
-                text = "$timeRange • Tap to pin to active list",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-              )
-            }
-          }
-        }
-      }
-
-      // Inline Add Scheduled Task Box right where the final element appears (no popup!)
-      item(key = "inline_calendar_add_box", contentType = "inline_add_card") {
-        InlineCalendarAddCard(
-          isExpanded = isAddingInline,
-          selectedDateMillis = selectedDateMillis,
-          onExpand = {
-            isAddingInline = true
-            scope.launch {
-              delay(120)
-              lazyListState.animateScrollToItem(
-                (dayTasks.size + dayEvents.size + 2).coerceAtLeast(0)
-              )
-            }
+        val eventKey = "cal_ev_${event.eventId}_${event.startMillis}"
+        ExpandableCalendarEventCard(
+          event = event,
+          isExpanded = expandedEventKey == eventKey,
+          onToggleExpand = {
+            expandedEventKey = if (expandedEventKey == eventKey) null else eventKey
           },
-          onCancel = { isAddingInline = false },
-          onAdd = { title, startMillis ->
-            onAddCalendarTask(title, startMillis)
-            isAddingInline = false
+          onAddToSlate = {
+            onImportEventToActiveList(event)
+            expandedEventKey = null
           },
         )
+      }
+
+      // Bottom convenience trigger when inline composer is not currently open
+      if (!isAddingInline) {
+        item(key = "inline_calendar_add_box_bottom", contentType = "inline_add_card") {
+          InlineCalendarAddCard(
+            isExpanded = false,
+            selectedDateMillis = selectedDateMillis,
+            onExpand = {
+              isAddingInline = true
+              scope.launch {
+                delay(100)
+                lazyListState.animateScrollToItem(if (!hasCalendarPermissions) 2 else 1)
+              }
+            },
+            onCancel = { isAddingInline = false },
+            onAdd = { title, startMillis ->
+              onAddCalendarTask(title, startMillis)
+              isAddingInline = false
+            },
+          )
+        }
       }
     }
   }
@@ -437,6 +501,8 @@ private fun InlineCalendarAddCard(
       .fillMaxWidth()
       .defaultMinSize(minHeight = 64.dp)
       .clip(RoundedCornerShape(20.dp))
+      .then(if (!isExpanded) Modifier.stickyPressScale(pressedScale = 0.98f) else Modifier)
+      .containedTapGlow(MaterialTheme.colorScheme.primary)
       .animateContentSize(
         animationSpec = spring(
           dampingRatio = Spring.DampingRatioMediumBouncy,
@@ -448,6 +514,10 @@ private fun InlineCalendarAddCard(
     shape = RoundedCornerShape(20.dp),
     color = MaterialTheme.colorScheme.primaryContainer,
     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    border = BorderStroke(
+      width = if (isExpanded) 1.5.dp else 1.dp,
+      color = MaterialTheme.colorScheme.primary.copy(alpha = if (isExpanded) 0.6f else 0.38f),
+    ),
     tonalElevation = if (isExpanded) 4.dp else 1.dp,
   ) {
     AnimatedContent(
@@ -587,6 +657,7 @@ private fun InteractiveCalendarCard(
   populatedDayKeys: Set<Int>,
   hasCalendarPermissions: Boolean,
   isSyncing: Boolean,
+  cardBorder: BorderStroke,
   onSelectDate: (Long) -> Unit,
   onChangeViewMode: (CalendarViewMode) -> Unit,
   onSyncNow: () -> Unit,
@@ -617,6 +688,7 @@ private fun InteractiveCalendarCard(
     modifier = Modifier.fillMaxWidth(),
     shape = RoundedCornerShape(24.dp),
     color = MaterialTheme.colorScheme.surfaceContainer,
+    border = cardBorder,
     tonalElevation = 2.dp,
   ) {
     Column(
@@ -686,6 +758,8 @@ private fun InteractiveCalendarCard(
             enabled = !isSyncing,
             modifier = Modifier
               .size(44.dp)
+              .clip(CircleShape)
+              .containedTapGlow(MaterialTheme.colorScheme.primary)
               .testTag("sync_calendar_now_button"),
           ) {
             Icon(
@@ -701,6 +775,7 @@ private fun InteractiveCalendarCard(
       Surface(
         shape = CircleShape,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = cardBorder,
         modifier = Modifier.fillMaxWidth(),
       ) {
         Row(

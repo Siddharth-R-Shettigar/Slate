@@ -2,9 +2,9 @@ package com.example.ui.workspace
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -12,16 +12,20 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -54,8 +58,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,17 +78,27 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.calendar.DeviceCalendarEvent
+import com.example.data.local.SlateListWithCounts
 import com.example.data.local.SlateTaskEntity
 import com.example.ui.CalendarViewMode
 import com.example.ui.SearchFilter
@@ -90,6 +106,7 @@ import com.example.ui.SlateUiState
 import com.example.ui.components.SlateIcons
 import com.example.ui.components.aiModeGlowPillBorder
 import com.example.ui.components.containedTapGlow
+import com.example.ui.components.stickyPressScale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -110,14 +127,17 @@ private val AiModeGlowColors = listOf(
 fun WorkspaceScreen(
   uiState: SlateUiState,
   isLayer2Visible: Boolean,
+  dismissLayer2Signal: Int = 0,
+  onHasLayer2SubStateChanged: (Boolean) -> Unit = {},
   onWorkspacePageChanged: (Int) -> Unit,
+  onNavigateBackFromSearch: () -> Unit,
   onOpenSettings: () -> Unit,
   onPullUpActiveSheet: () -> Unit,
   onSelectAndOpenList: (Long) -> Unit,
   onSetDefaultLaunchList: (Long) -> Unit,
   onCreateList: (String, Long) -> Unit,
   onUpdateList: (Long, String, Long) -> Unit,
-  onDeleteList: (Long) -> Unit,
+  onRequestDeleteList: (SlateListWithCounts) -> Unit,
   onPersistListOrder: (List<Long>) -> Unit,
   onCalendarPermissionsResult: () -> Unit,
   onSelectDate: (Long) -> Unit,
@@ -132,11 +152,25 @@ fun WorkspaceScreen(
   modifier: Modifier = Modifier,
 ) {
   val scope = rememberCoroutineScope()
+  val density = LocalDensity.current
+  val haptic = LocalHapticFeedback.current
   val keyboardController = LocalSoftwareKeyboardController.current
   val pagerState = rememberPagerState(
     initialPage = uiState.workspacePage,
     pageCount = { 3 },
   )
+
+  var hasListsSubState by remember { mutableStateOf(false) }
+  var hasCalendarSubState by remember { mutableStateOf(false) }
+  var hasSearchSubState by remember { mutableStateOf(false) }
+
+  // Samsung One UI Collapsible Reachability Header (0f = expanded ~148dp, 1f = compact ~64dp)
+  val expandedHeaderHeight = 148.dp
+  val collapsedHeaderHeight = 64.dp
+  val expandedHeaderHeightPx = with(density) { expandedHeaderHeight.toPx() }
+  val collapsedHeaderHeightPx = with(density) { collapsedHeaderHeight.toPx() }
+  val collapseRangePx = (expandedHeaderHeightPx - collapsedHeaderHeightPx).coerceAtLeast(1f)
+  val headerCollapseAnim = remember { Animatable(0f) }
 
   LaunchedEffect(pagerState) {
     snapshotFlow { pagerState.currentPage }
@@ -145,6 +179,16 @@ fun WorkspaceScreen(
         onWorkspacePageChanged(page)
         if (page != 2) {
           keyboardController?.hide()
+        }
+        // Smoothly restore reachability header when switching workspace pages
+        if (headerCollapseAnim.value > 0.05f) {
+          headerCollapseAnim.animateTo(
+            targetValue = 0f,
+            animationSpec = spring(
+              dampingRatio = Spring.DampingRatioNoBouncy,
+              stiffness = Spring.StiffnessMediumLow,
+            ),
+          )
         }
       }
   }
@@ -161,11 +205,83 @@ fun WorkspaceScreen(
     }
   }
 
+  val activePage = pagerState.currentPage
+  LaunchedEffect(activePage, hasListsSubState, hasCalendarSubState, hasSearchSubState) {
+    val activeSubState = when (activePage) {
+      0 -> hasListsSubState
+      1 -> hasCalendarSubState
+      else -> hasSearchSubState
+    }
+    onHasLayer2SubStateChanged(activeSubState)
+  }
+
+  val oneUiNestedScrollConnection = remember(collapseRangePx, haptic) {
+    object : NestedScrollConnection {
+      override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+        val dy = available.y
+        if (dy < 0f && headerCollapseAnim.value < 1f) {
+          val curPx = headerCollapseAnim.value * collapseRangePx
+          val nextPx = (curPx - dy).coerceIn(0f, collapseRangePx)
+          val consumedY = curPx - nextPx // negative or zero
+          scope.launch { headerCollapseAnim.snapTo(nextPx / collapseRangePx) }
+          return Offset(0f, consumedY)
+        }
+        return Offset.Zero
+      }
+
+      override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+        val dy = available.y
+        if (dy > 0f && headerCollapseAnim.value > 0f) {
+          val curPx = headerCollapseAnim.value * collapseRangePx
+          val nextPx = (curPx - dy).coerceIn(0f, collapseRangePx)
+          val consumedY = curPx - nextPx // positive or zero
+          scope.launch { headerCollapseAnim.snapTo(nextPx / collapseRangePx) }
+          return Offset(0f, consumedY)
+        }
+        return Offset.Zero
+      }
+
+      override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+        val current = headerCollapseAnim.value
+        if (current > 0.02f && current < 0.98f) {
+          val snapTarget = when {
+            available.y < -300f -> 1f
+            available.y > 300f -> 0f
+            current >= 0.45f -> 1f
+            else -> 0f
+          }
+          haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+          headerCollapseAnim.animateTo(
+            targetValue = snapTarget,
+            animationSpec = spring(
+              dampingRatio = Spring.DampingRatioNoBouncy,
+              stiffness = Spring.StiffnessMedium,
+            ),
+          )
+        }
+        return Velocity.Zero
+      }
+    }
+  }
+
   val listsTitle = stringResource(R.string.workspace_lists)
   val calendarTitle = stringResource(R.string.workspace_calendar)
   val searchTitle = stringResource(R.string.workspace_search)
   val workspaceTitles = remember(listsTitle, calendarTitle, searchTitle) {
     listOf(listsTitle, calendarTitle, searchTitle)
+  }
+
+  val openTasksCount = remember(uiState.allTasks) {
+    uiState.allTasks.count { !it.isCompleted }
+  }
+  val contextualSubtitle = when (activePage) {
+    0 -> "${uiState.lists.size} lists • $openTasksCount open tasks"
+    1 -> if (uiState.hasCalendarPermissions) {
+      "${uiState.syncedEvents.size} synced calendar events"
+    } else {
+      "Sync your device calendar"
+    }
+    else -> "Tasks, lists & calendar events"
   }
 
   val topBg = MaterialTheme.colorScheme.surfaceContainerLowest
@@ -179,8 +295,8 @@ fun WorkspaceScreen(
     uiState.allTasks.filter { it.scheduledStartMillis != null }
   }
 
-  val activePage = pagerState.currentPage
   val isSearchMode = activePage == 2 && isLayer2Visible && !uiState.isSettingsOpen
+  val borderStrokeColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
 
   Box(
     modifier = modifier
@@ -188,46 +304,109 @@ fun WorkspaceScreen(
       .background(backgroundBrush)
       .statusBarsPadding(),
   ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-      // Layer 2 Top Bar: Expressive Workspace Title + Circular Settings IconButton
-      Row(
+    Column(
+      modifier = Modifier
+        .fillMaxSize()
+        .nestedScroll(oneUiNestedScrollConnection),
+    ) {
+      // Samsung One UI Collapsible Reachability Header (Layout & GPU driven: 0 recompositions on scroll!)
+      Box(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(start = 22.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+          .layout { measurable, constraints ->
+            val t = headerCollapseAnim.value
+            val hPx = (expandedHeaderHeightPx - collapseRangePx * t)
+              .roundToInt()
+              .coerceAtLeast(1)
+            val placeable = measurable.measure(
+              constraints.copy(minHeight = hPx, maxHeight = hPx),
+            )
+            layout(placeable.width, hPx) {
+              placeable.placeRelative(0, 0)
+            }
+          }
+          .padding(start = 22.dp, end = 16.dp),
       ) {
-        AnimatedContent(
-          targetState = workspaceTitles[activePage],
-          transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
-          label = "workspaceTitleAnim",
-        ) { title ->
+        // Expanded Reachability Title & Subtitle (Bottom-left, fades out smoothly on collapse)
+        Column(
+          modifier = Modifier
+            .align(Alignment.BottomStart)
+            .padding(end = 60.dp, bottom = 14.dp)
+            .graphicsLayer {
+              val t = headerCollapseAnim.value
+              alpha = (1f - t * 1.85f).coerceIn(0f, 1f)
+              translationY = -28f * t
+            },
+        ) {
+          AnimatedContent(
+            targetState = workspaceTitles[activePage],
+            transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
+            label = "workspaceExpandedTitleAnim",
+          ) { title ->
+            Text(
+              text = title,
+              style = MaterialTheme.typography.displaySmall,
+              color = MaterialTheme.colorScheme.onBackground,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.testTag("workspace_top_title"),
+            )
+          }
+          Spacer(modifier = Modifier.height(4.dp))
           Text(
-            text = title,
-            style = MaterialTheme.typography.displaySmall,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.testTag("workspace_top_title"),
+            text = contextualSubtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
           )
         }
 
-        Surface(
-          onClick = onOpenSettings,
-          shape = CircleShape,
-          color = MaterialTheme.colorScheme.surfaceContainerHigh,
-          tonalElevation = 2.dp,
+        // Top Bar Row (Pinned at top 64dp: holds Compact Title when scrolled + Circular Settings Button)
+        Box(
           modifier = Modifier
-            .size(48.dp)
-            .clip(CircleShape)
-            .containedTapGlow(MaterialTheme.colorScheme.primary)
-            .testTag("workspace_settings_button"),
+            .fillMaxWidth()
+            .height(collapsedHeaderHeight)
+            .align(Alignment.TopCenter),
         ) {
-          Box(contentAlignment = Alignment.Center) {
-            Icon(
-              imageVector = Icons.Outlined.Settings,
-              contentDescription = stringResource(R.string.cd_settings),
-              tint = MaterialTheme.colorScheme.onSurface,
-              modifier = Modifier.size(22.dp),
-            )
+          Text(
+            text = workspaceTitles[activePage],
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+              .align(Alignment.CenterStart)
+              .padding(end = 60.dp)
+              .graphicsLayer {
+                val t = headerCollapseAnim.value
+                alpha = ((t - 0.48f) / 0.42f).coerceIn(0f, 1f)
+                translationY = (1f - t) * 14f
+              },
+          )
+
+          Surface(
+            onClick = onOpenSettings,
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, borderStrokeColor),
+            tonalElevation = 2.dp,
+            modifier = Modifier
+              .align(Alignment.CenterEnd)
+              .size(48.dp)
+              .stickyPressScale(0.92f)
+              .clip(CircleShape)
+              .containedTapGlow(MaterialTheme.colorScheme.primary)
+              .testTag("workspace_settings_button"),
+          ) {
+            Box(contentAlignment = Alignment.Center) {
+              Icon(
+                imageVector = Icons.Outlined.Settings,
+                contentDescription = stringResource(R.string.cd_settings),
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp),
+              )
+            }
           }
         }
       }
@@ -247,11 +426,13 @@ fun WorkspaceScreen(
             lists = uiState.lists,
             defaultLaunchListId = uiState.settings.defaultLaunchListId,
             activeListId = uiState.activeListId,
+            dismissSignal = if (activePage == 0) dismissLayer2Signal else 0,
+            onHasActiveSubStateChanged = { hasListsSubState = it },
             onSelectAndOpenList = onSelectAndOpenList,
             onSetDefaultLaunchList = onSetDefaultLaunchList,
             onCreateList = onCreateList,
             onUpdateList = onUpdateList,
-            onDeleteList = onDeleteList,
+            onRequestDeleteList = onRequestDeleteList,
             onPersistListOrder = onPersistListOrder,
           )
           1 -> CalendarSyncPage(
@@ -262,6 +443,8 @@ fun WorkspaceScreen(
             viewMode = uiState.calendarViewMode,
             isSyncing = uiState.isSyncingCalendar,
             lastSyncedMillis = uiState.lastSyncedMillis,
+            dismissSignal = if (activePage == 1) dismissLayer2Signal else 0,
+            onHasActiveSubStateChanged = { hasCalendarSubState = it },
             onPermissionsResult = onCalendarPermissionsResult,
             onSelectDate = onSelectDate,
             onChangeViewMode = onChangeCalendarViewMode,
@@ -275,6 +458,8 @@ fun WorkspaceScreen(
             allTasks = uiState.allTasks,
             lists = uiState.lists,
             syncedEvents = uiState.syncedEvents,
+            dismissSignal = if (activePage == 2) dismissLayer2Signal else 0,
+            onHasActiveSubStateChanged = { hasSearchSubState = it },
             onSelectFilter = onSelectSearchFilter,
             onToggleTaskComplete = onToggleTaskComplete,
             onToggleTaskStar = onToggleTaskStar,
@@ -297,6 +482,7 @@ fun WorkspaceScreen(
       },
       onPullUpActiveSheet = onPullUpActiveSheet,
       onSearchQueryChange = onSearchQueryChange,
+      onNavigateBackFromSearch = onNavigateBackFromSearch,
       onSelectPage = { page ->
         scope.launch { pagerState.animateScrollToPage(page) }
       },
@@ -314,11 +500,13 @@ private fun WorkspaceBottomDock(
   activeSheetLabel: String,
   onPullUpActiveSheet: () -> Unit,
   onSearchQueryChange: (String) -> Unit,
+  onNavigateBackFromSearch: () -> Unit,
   onSelectPage: (Int) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val density = LocalDensity.current
   val keyboardController = LocalSoftwareKeyboardController.current
+  val borderStrokeColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
 
   Box(
     modifier = modifier
@@ -342,7 +530,7 @@ private fun WorkspaceBottomDock(
           onQueryChange = onSearchQueryChange,
           onBackToNav = {
             keyboardController?.hide()
-            onSelectPage(0)
+            onNavigateBackFromSearch()
           },
         )
       } else {
@@ -356,10 +544,12 @@ private fun WorkspaceBottomDock(
             shape = CircleShape,
             color = MaterialTheme.colorScheme.secondaryContainer,
             contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            border = BorderStroke(1.dp, borderStrokeColor),
             tonalElevation = 5.dp,
             shadowElevation = 8.dp,
             modifier = Modifier
               .size(62.dp)
+              .stickyPressScale(0.92f)
               .clip(CircleShape)
               .containedTapGlow(MaterialTheme.colorScheme.primary)
               .testTag("pull_up_active_sheet_pill"),
@@ -383,6 +573,7 @@ private fun WorkspaceBottomDock(
             expandedShadowElevation = 10.dp,
             modifier = Modifier
               .clip(CircleShape)
+              .border(1.dp, borderStrokeColor, CircleShape)
               .containedTapGlow(MaterialTheme.colorScheme.primary, maxAlpha = 0.34f)
               .testTag("workspace_floating_toolbar"),
           ) {
@@ -413,17 +604,17 @@ private fun WorkspaceBottomDock(
 
                 val listsTintState = animateColorAsState(
                   targetValue = if (currentPage == 0) onPrimary else onSurfaceVariant,
-                  animationSpec = tween(240, easing = FastOutSlowInEasing),
+                  animationSpec = tween(220, easing = FastOutSlowInEasing),
                   label = "listsTint",
                 )
                 val calendarTintState = animateColorAsState(
                   targetValue = if (currentPage == 1) onPrimary else onSurfaceVariant,
-                  animationSpec = tween(240, easing = FastOutSlowInEasing),
+                  animationSpec = tween(220, easing = FastOutSlowInEasing),
                   label = "calendarTint",
                 )
                 val searchTintState = animateColorAsState(
                   targetValue = if (currentPage == 2) onPrimary else onSurfaceVariant,
-                  animationSpec = tween(240, easing = FastOutSlowInEasing),
+                  animationSpec = tween(220, easing = FastOutSlowInEasing),
                   label = "searchTint",
                 )
 
@@ -479,6 +670,7 @@ private fun BottomGlowingSearchPill(
 ) {
   val focusRequester = remember { FocusRequester() }
   val keyboardController = LocalSoftwareKeyboardController.current
+  val baseBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
 
   LaunchedEffect(Unit) {
     delay(80)
@@ -491,6 +683,7 @@ private fun BottomGlowingSearchPill(
       .fillMaxWidth()
       .widthIn(max = 580.dp)
       .clip(CircleShape)
+      .border(1.dp, baseBorderColor, CircleShape)
       .aiModeGlowPillBorder(
         colors = AiModeGlowColors,
         cornerRadius = 32.dp,
@@ -602,6 +795,7 @@ private fun ToolbarNavIconSlot(
   Box(
     modifier = Modifier
       .size(54.dp)
+      .stickyPressScale(0.90f)
       .clip(CircleShape)
       .containedTapGlow(glowColor = glowColor)
       .clickable(
@@ -616,23 +810,36 @@ private fun ToolbarNavIconSlot(
   }
 }
 
+/**
+ * Targeted micro-animation: ONLY runs when transitioning INTO `selected == true`.
+ * Outgoing icons snap cleanly to `0f` so multiple icons never animate together.
+ */
 @Composable
 private fun AnimatedStackedLayersIcon(
   selected: Boolean,
   tintState: State<Color>,
   modifier: Modifier = Modifier,
 ) {
-  val animProgress = animateFloatAsState(
-    targetValue = if (selected) 1f else 0f,
-    animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
-    label = "layersAnimProgress",
-  )
+  val animProgress = remember { Animatable(if (selected) 1f else 0f) }
+
+  LaunchedEffect(selected) {
+    if (selected) {
+      animProgress.snapTo(0f)
+      animProgress.animateTo(
+        targetValue = 1f,
+        animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
+      )
+    } else {
+      animProgress.snapTo(0f)
+    }
+  }
 
   Canvas(
     modifier = modifier
       .semantics { contentDescription = "Lists" }
       .graphicsLayer {
-        val s = 0.96f + 0.12f * animProgress.value
+        val p = animProgress.value
+        val s = if (selected) 0.96f + 0.10f * p else 0.96f
         scaleX = s
         scaleY = s
       }
@@ -644,14 +851,14 @@ private fun AnimatedStackedLayersIcon(
     val cardW = w * 0.78f
     val cardH = h * 0.29f
     val left = (w - cardW) / 2f
-    val splitPx = h * 0.16f * sin(PI * p).toFloat()
+    val splitPx = if (selected) h * 0.16f * sin(PI * p).toFloat() else 0f
     val radius = CornerRadius(w * 0.14f, w * 0.14f)
     val strokeWidth = w * 0.085f
 
     val bottomTop = h * 0.56f + splitPx
     val topTop = h * 0.15f - splitPx
 
-    if (p > 0.5f) {
+    if (selected) {
       drawRoundRect(
         color = tint.copy(alpha = 0.68f),
         topLeft = Offset(left, bottomTop),
@@ -689,11 +896,20 @@ private fun AnimatedCalendarIcon(
   tintState: State<Color>,
   modifier: Modifier = Modifier,
 ) {
-  val animProgress = animateFloatAsState(
-    targetValue = if (selected) 1f else 0f,
-    animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
-    label = "calendarAnimProgress",
-  )
+  val animProgress = remember { Animatable(if (selected) 1f else 0f) }
+
+  LaunchedEffect(selected) {
+    if (selected) {
+      animProgress.snapTo(0f)
+      animProgress.animateTo(
+        targetValue = 1f,
+        animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+      )
+    } else {
+      animProgress.snapTo(0f)
+    }
+  }
+
   val roundedPainter = rememberVectorPainter(SlateIcons.CalendarMonthRounded)
   val outlinedPainter = rememberVectorPainter(SlateIcons.CalendarMonthOutlined)
 
@@ -702,13 +918,13 @@ private fun AnimatedCalendarIcon(
       .semantics { contentDescription = "Calendar" }
       .graphicsLayer {
         val p = animProgress.value
-        val s = 0.96f + 0.12f * p
+        val s = if (selected) 0.96f + 0.10f * p else 0.96f
         scaleX = s
         scaleY = s
-        rotationZ = sin(PI * p).toFloat() * -10f
+        rotationZ = if (selected) sin(PI * p).toFloat() * -10f else 0f
       },
   ) {
-    val painter = if (animProgress.value > 0.5f) roundedPainter else outlinedPainter
+    val painter = if (selected) roundedPainter else outlinedPainter
     with(painter) {
       draw(size = size, colorFilter = ColorFilter.tint(tintState.value))
     }
@@ -722,11 +938,20 @@ private fun AnimatedCoinFlipSearchIcon(
   modifier: Modifier = Modifier,
 ) {
   val density = LocalDensity.current.density
-  val animProgress = animateFloatAsState(
-    targetValue = if (selected) 1f else 0f,
-    animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
-    label = "searchCoinFlipProgress",
-  )
+  val animProgress = remember { Animatable(if (selected) 1f else 0f) }
+
+  LaunchedEffect(selected) {
+    if (selected) {
+      animProgress.snapTo(0f)
+      animProgress.animateTo(
+        targetValue = 1f,
+        animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
+      )
+    } else {
+      animProgress.snapTo(0f)
+    }
+  }
+
   val roundedPainter = rememberVectorPainter(Icons.Rounded.Search)
   val outlinedPainter = rememberVectorPainter(Icons.Outlined.Search)
 
@@ -734,11 +959,11 @@ private fun AnimatedCoinFlipSearchIcon(
     modifier = modifier
       .semantics { contentDescription = "Search" }
       .graphicsLayer {
-        rotationY = 360f * animProgress.value
+        rotationY = if (selected) 360f * animProgress.value else 0f
         cameraDistance = 14f * density
       },
   ) {
-    val painter = if (animProgress.value > 0.5f) roundedPainter else outlinedPainter
+    val painter = if (selected) roundedPainter else outlinedPainter
     with(painter) {
       draw(size = size, colorFilter = ColorFilter.tint(tintState.value))
     }

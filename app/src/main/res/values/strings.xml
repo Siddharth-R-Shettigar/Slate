@@ -2,7 +2,7 @@
     <string name="app_name">Slate</string>
     <string name="default_list_name">List</string>
     <string name="add_item_label">Add item</string>
-    <string name="add_item_placeholder">What needs to get done?</string>
+    <string name="add_item_placeholder">Add task…</string>
     <string name="add_time_sync_calendar">Add Time / Sync to Calendar</string>
     <string name="todays_events_mode">Today\'s Events</string>
     <string name="workspace_lists">Lists</string>

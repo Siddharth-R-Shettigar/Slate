@@ -127,6 +127,24 @@ class SlateRepository(
     )
   }
 
+  suspend fun updateTaskTitle(task: SlateTaskEntity, newTitle: String) = withContext(Dispatchers.IO) {
+    val cleanTitle = newTitle.trim()
+    if (cleanTitle.isEmpty() || cleanTitle == task.title) return@withContext
+    val updated = task.copy(
+      title = cleanTitle,
+      updatedAt = System.currentTimeMillis(),
+    )
+    taskDao.updateTask(updated)
+    if (task.calendarEventId != null && task.scheduledStartMillis != null && calendarSyncRepository.hasWritePermission()) {
+      calendarSyncRepository.updateEvent(
+        eventId = task.calendarEventId,
+        title = cleanTitle,
+        startMillis = task.scheduledStartMillis,
+        endMillis = task.scheduledEndMillis ?: (task.scheduledStartMillis + 3_600_000L),
+      )
+    }
+  }
+
   suspend fun scheduleTaskAndSync(
     task: SlateTaskEntity,
     startMillis: Long,

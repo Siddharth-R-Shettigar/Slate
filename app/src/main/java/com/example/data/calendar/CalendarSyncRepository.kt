@@ -43,6 +43,8 @@ data class DeviceCalendarEvent(
   val endMillis: Long,
   val allDay: Boolean,
   val color: Int,
+  val location: String = "",
+  val calendarName: String = "",
 )
 
 class CalendarSyncRepository(private val context: Context) {
@@ -192,6 +194,8 @@ class CalendarSyncRepository(private val context: Context) {
       CalendarContract.Instances.END,
       CalendarContract.Instances.ALL_DAY,
       CalendarContract.Instances.DISPLAY_COLOR,
+      CalendarContract.Instances.EVENT_LOCATION,
+      CalendarContract.Instances.CALENDAR_DISPLAY_NAME,
     )
     val instanceSelection = buildString {
       append("${CalendarContract.Instances.VISIBLE} = 1")
@@ -217,6 +221,8 @@ class CalendarSyncRepository(private val context: Context) {
         val endIdx = cursor.getColumnIndexOrThrow(CalendarContract.Instances.END)
         val allDayIdx = cursor.getColumnIndexOrThrow(CalendarContract.Instances.ALL_DAY)
         val colorIdx = cursor.getColumnIndexOrThrow(CalendarContract.Instances.DISPLAY_COLOR)
+        val locationIdx = cursor.getColumnIndex(CalendarContract.Instances.EVENT_LOCATION)
+        val calNameIdx = cursor.getColumnIndex(CalendarContract.Instances.CALENDAR_DISPLAY_NAME)
 
         while (cursor.moveToNext()) {
           val title = cursor.getString(titleIdx)?.trim().orEmpty()
@@ -233,6 +239,8 @@ class CalendarSyncRepository(private val context: Context) {
             endMillis = if (rawEnd > begin) rawEnd else begin + 3_600_000L,
             allDay = cursor.getInt(allDayIdx) == 1,
             color = cursor.getInt(colorIdx),
+            location = if (locationIdx >= 0) cursor.getString(locationIdx).orEmpty() else "",
+            calendarName = if (calNameIdx >= 0) cursor.getString(calNameIdx).orEmpty() else "",
           )
         }
       }
@@ -251,6 +259,8 @@ class CalendarSyncRepository(private val context: Context) {
       CalendarContract.Events.ALL_DAY,
       CalendarContract.Events.DISPLAY_COLOR,
       CalendarContract.Events.RRULE,
+      CalendarContract.Events.EVENT_LOCATION,
+      CalendarContract.Events.CALENDAR_DISPLAY_NAME,
     )
     val eventSelection = buildString {
       append("${CalendarContract.Events.DELETED} = 0")
@@ -282,6 +292,8 @@ class CalendarSyncRepository(private val context: Context) {
         val allDayIdx = cursor.getColumnIndexOrThrow(CalendarContract.Events.ALL_DAY)
         val colorIdx = cursor.getColumnIndexOrThrow(CalendarContract.Events.DISPLAY_COLOR)
         val rruleIdx = cursor.getColumnIndexOrThrow(CalendarContract.Events.RRULE)
+        val locationIdx = cursor.getColumnIndex(CalendarContract.Events.EVENT_LOCATION)
+        val calNameIdx = cursor.getColumnIndex(CalendarContract.Events.CALENDAR_DISPLAY_NAME)
 
         while (cursor.moveToNext()) {
           val rrule = cursor.getString(rruleIdx)
@@ -301,6 +313,8 @@ class CalendarSyncRepository(private val context: Context) {
             endMillis = if (rawEnd > start) rawEnd else start + 3_600_000L,
             allDay = cursor.getInt(allDayIdx) == 1,
             color = cursor.getInt(colorIdx),
+            location = if (locationIdx >= 0) cursor.getString(locationIdx).orEmpty() else "",
+            calendarName = if (calNameIdx >= 0) cursor.getString(calNameIdx).orEmpty() else "",
           )
         }
       }

@@ -58,6 +58,7 @@ data class SlateUiState(
   val isSheetOpen: Boolean = true,
   val isSettingsOpen: Boolean = false,
   val workspacePage: Int = 0,
+  val previousNonSearchPage: Int = 0,
   val lists: List<SlateListWithCounts> = emptyList(),
   val activeListId: Long = 1L,
   val activeListTasks: List<SlateTaskEntity> = emptyList(),
@@ -72,6 +73,7 @@ data class SlateUiState(
   val searchFilter: SearchFilter = SearchFilter.ALL,
   val isSyncingCalendar: Boolean = false,
   val lastSyncedMillis: Long? = null,
+  val recentlyAddedTaskId: Long? = null,
 ) {
   val activeList: SlateListWithCounts?
     get() = lists.firstOrNull { it.id == activeListId } ?: lists.firstOrNull()
@@ -91,6 +93,7 @@ class SlateViewModel(
   private val _isSheetOpen = MutableStateFlow(true)
   private val _isSettingsOpen = MutableStateFlow(false)
   private val _workspacePage = MutableStateFlow(0)
+  private val _previousNonSearchPage = MutableStateFlow(0)
   private val _activeListId = MutableStateFlow(1L)
   private val _hasCalendarPermissions = MutableStateFlow(repository.calendarSyncRepository.hasCalendarPermissions())
   private val _writableCalendars = MutableStateFlow<List<DeviceCalendar>>(emptyList())
@@ -102,6 +105,8 @@ class SlateViewModel(
   private val _searchFilter = MutableStateFlow(SearchFilter.ALL)
   private val _isSyncingCalendar = MutableStateFlow(false)
   private val _lastSyncedMillis = MutableStateFlow<Long?>(null)
+  private val _recentlyAddedTaskId = MutableStateFlow<Long?>(null)
+  private var recentlyAddedClearJob: Job? = null
 
   private val _snackbarEvents = MutableSharedFlow<SlateSnackbarEvent>()
   val snackbarEvents: SharedFlow<SlateSnackbarEvent> = _snackbarEvents.asSharedFlow()
@@ -177,7 +182,8 @@ class SlateViewModel(
   val uiState: StateFlow<SlateUiState> = combine(
     coreStateFlow,
     calendarAndSearchSliceFlow,
-  ) { core, cal ->
+    _recentlyAddedTaskId,
+  ) { core, cal, recentlyAddedTaskId ->
     val resolvedListId = if (core.lists.any { it.id == core.activeListId }) {
       core.activeListId
     } else {
@@ -189,6 +195,7 @@ class SlateViewModel(
       isSheetOpen = core.isSheetOpen,
       isSettingsOpen = core.isSettingsOpen,
       workspacePage = core.workspacePage,
+      previousNonSearchPage = _previousNonSearchPage.value,
       lists = core.lists,
       activeListId = resolvedListId,
       activeListTasks = core.activeListTasks,
@@ -203,6 +210,7 @@ class SlateViewModel(
       searchFilter = cal.searchFilter,
       isSyncingCalendar = cal.isSyncingCalendar,
       lastSyncedMillis = cal.lastSyncedMillis,
+      recentlyAddedTaskId = recentlyAddedTaskId,
     )
   }.stateIn(
     scope = viewModelScope,
@@ -306,7 +314,15 @@ class SlateViewModel(
   }
 
   fun setWorkspacePage(page: Int) {
-    _workspacePage.value = page.coerceIn(0, 2)
+    val clamped = page.coerceIn(0, 2)
+    if (clamped != 2) {
+      _previousNonSearchPage.value = clamped
+    }
+    _workspacePage.value = clamped
+  }
+
+  fun navigateBackFromSearch() {
+    _workspacePage.value = _previousNonSearchPage.value.coerceIn(0, 1)
   }
 
   fun selectActiveList(listId: Long, openSheetImmediately: Boolean = true) {
@@ -350,6 +366,18 @@ class SlateViewModel(
   }
 
   // Task CRUD & Gestures
+  private fun markRecentlyAddedTask(taskId: Long) {
+    if (taskId <= 0L) return
+    recentlyAddedClearJob?.cancel()
+    _recentlyAddedTaskId.value = taskId
+    recentlyAddedClearJob = viewModelScope.launch {
+      kotlinx.coroutines.delay(950L)
+      if (_recentlyAddedTaskId.value == taskId) {
+        _recentlyAddedTaskId.value = null
+      }
+    }
+  }
+
   fun addTask(title: String, scheduledStartMillis: Long? = null, syncToCalendar: Boolean = false) {
     viewModelScope.launch {
       val targetListId = uiState.value.activeListId
@@ -363,12 +391,13 @@ class SlateViewModel(
       } else {
         scheduledStartMillis
       }
-      repository.addTask(
+      val newId = repository.addTask(
         listId = targetListId,
         title = title,
         scheduledStartMillis = effectiveStart,
         syncToCalendarId = if (effectiveStart != null) calId else null,
       )
+      markRecentlyAddedTask(newId)
       if (effectiveStart != null && calId != null) {
         syncCalendarNow()
       }
@@ -379,12 +408,13 @@ class SlateViewModel(
     viewModelScope.launch {
       val targetListId = uiState.value.activeListId
       val calId = uiState.value.effectiveCalendarId
-      repository.addTask(
+      val newId = repository.addTask(
         listId = targetListId,
         title = title,
         scheduledStartMillis = startMillis,
         syncToCalendarId = calId,
       )
+      markRecentlyAddedTask(newId)
       if (calId != null) {
         syncCalendarNow()
       }
@@ -400,6 +430,15 @@ class SlateViewModel(
   fun toggleTaskStarred(task: SlateTaskEntity) {
     viewModelScope.launch {
       repository.toggleTaskStarred(task)
+    }
+  }
+
+  fun updateTaskTitle(task: SlateTaskEntity, newTitle: String) {
+    viewModelScope.launch {
+      repository.updateTaskTitle(task, newTitle)
+      if (task.calendarEventId != null) {
+        syncCalendarNow()
+      }
     }
   }
 
@@ -451,7 +490,8 @@ class SlateViewModel(
 
   fun importEventToActiveList(event: DeviceCalendarEvent) {
     viewModelScope.launch {
-      repository.importCalendarEventAsTask(event, uiState.value.activeListId)
+      val newId = repository.importCalendarEventAsTask(event, uiState.value.activeListId)
+      markRecentlyAddedTask(newId)
       _snackbarEvents.emit(SlateSnackbarEvent.Message("Added \"${event.title}\" to ${uiState.value.activeList?.name ?: "List"}"))
     }
   }

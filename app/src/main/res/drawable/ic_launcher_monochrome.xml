@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Offset secondary slate card contour behind front card -->
+    <path
+        android:pathData="M30.5,57.5L30.5,38.5A6.5,6.5 0,0 1,37 32L59.5,32"
+        android:strokeWidth="3.2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- Front primary slate card silhouette with bold rounded checkmark knocked out cleanly -->
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M44.5,37L68.5,37A9.5,9.5 0,0 1,78 46.5L78,66.5A9.5,9.5 0,0 1,68.5 76L44.5,76A9.5,9.5 0,0 1,35 66.5L35,46.5A9.5,9.5 0,0 1,44.5 37ZM49.04,55.93L53.80,60.50L64.41,49.48A2.2,2.2 0,0 1,67.59 52.52L55.38,65.16A2.2,2.2 0,0 1,52.25 65.19L45.96,59.07A2.2,2.2 0,0 1,49.04 55.93Z" />
+</vector>
