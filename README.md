@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="app/src/main/res/drawable/slate_app_icon_1795331028925.jpg" width="96" alt="Slate App Icon" />
+<img src="screenshots/Slate Logo.png" width="96" alt="Slate App Icon" />
 
 # Slate
 
