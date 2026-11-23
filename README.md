@@ -19,10 +19,10 @@
 ## Preview
 
 <p align="center">
-  <img src="screenshots/01-workspace.png" width="23%" alt="Lists Workspace" />
-  <img src="screenshots/02-calendar.png" width="23%" alt="Calendar Sync" />
-  <img src="screenshots/03-interactions.png" width="23%" alt="Expressive Interactions" />
-  <img src="screenshots/04-settings-about.png" width="23%" alt="Settings & About" />
+  <img src="screenshots/List Pane.png" width="23%" alt="Lists Workspace" />
+  <img src="screenshots/Calendar Screen.png" width="23%" alt="Calendar Sync" />
+  <img src="screenshots/Search Screen.png" width="23%" alt="Expressive Interactions" />
+  <img src="screenshots/Settings Page.png" width="23%" alt="Settings & About" />
 </p>
 
 ## Why Slate?
